@@ -17,8 +17,8 @@
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/thread.h"
 
+#if LLVM_ENABLE_THREADS
 #include <future>
-
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -91,11 +91,63 @@ private:
   /// Keep track of the number of thread actually busy
   std::atomic<unsigned> ActiveThreads;
 
-#if LLVM_ENABLE_THREADS // avoids warning for unused variable
   /// Signal for the destruction of the pool, asking thread to exit.
   bool EnableFlag;
-#endif
 };
 }
+
+#else // LLVM_ENABLE_THREADS disabled
+
+#include <functional>
+#include <memory>
+#include <queue>
+#include <utility>
+
+namespace llvm {
+
+/// A ThreadPool for asynchronous parallel execution on a defined number of
+/// threads.
+///
+/// When LLVM_ENABLE_THREADS is disabled, this is a simple sequential executor.
+class ThreadPool {
+public:
+  using TaskTy = std::function<void()>;
+
+  /// Construct a pool with the number of threads found by
+  /// hardware_concurrency().
+  ThreadPool();
+
+  /// Construct a pool of \p ThreadCount threads
+  ThreadPool(unsigned ThreadCount);
+
+  /// Blocking destructor: the pool will wait for all the tasks to complete.
+  ~ThreadPool();
+
+  /// Submit a task to the pool. In single-threaded mode, this just queues
+  /// the task to be executed when wait() is called.
+  template <typename Function, typename... Args>
+  inline void async(Function &&F, Args &&... ArgList) {
+    auto Task =
+        std::bind(std::forward<Function>(F), std::forward<Args>(ArgList)...);
+    Tasks.push(std::move(Task));
+  }
+
+  /// Submit a task to the pool. In single-threaded mode, this just queues
+  /// the task to be executed when wait() is called.
+  template <typename Function>
+  inline void async(Function &&F) {
+    Tasks.push(std::forward<Function>(F));
+  }
+
+  /// Blocking wait for all the tasks to complete.
+  void wait();
+
+private:
+  /// Tasks waiting for execution.
+  std::queue<TaskTy> Tasks;
+};
+}
+
+#endif // LLVM_ENABLE_THREADS
 
 #endif // LLVM_SUPPORT_THREAD_POOL_H

@@ -34,6 +34,7 @@
 #include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Mutex.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/SMLoc.h"
@@ -48,7 +49,6 @@
 #include <limits>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -243,7 +243,7 @@ public:
                               SmallVectorImpl<char> &Output) const override;
 
 private:
-  mutable std::mutex CWDMutex;
+  mutable sys::Mutex CWDMutex;
   mutable std::string CWDCache;
 };
 
@@ -267,7 +267,7 @@ RealFileSystem::openFileForRead(const Twine &Name) {
 }
 
 llvm::ErrorOr<std::string> RealFileSystem::getCurrentWorkingDirectory() const {
-  std::lock_guard<std::mutex> Lock(CWDMutex);
+  sys::ScopedLock Lock(CWDMutex);
   if (!CWDCache.empty())
     return CWDCache;
   SmallString<256> Dir;
@@ -289,7 +289,7 @@ std::error_code RealFileSystem::setCurrentWorkingDirectory(const Twine &Path) {
     return EC;
 
   // Invalidate cache.
-  std::lock_guard<std::mutex> Lock(CWDMutex);
+  sys::ScopedLock Lock(CWDMutex);
   CWDCache.clear();
   return std::error_code();
 }

@@ -112,8 +112,7 @@ ThreadPool::~ThreadPool() {
 ThreadPool::ThreadPool() : ThreadPool(0) {}
 
 // No threads are launched, issue a warning if ThreadCount is not 0
-ThreadPool::ThreadPool(unsigned ThreadCount)
-    : ActiveThreads(0) {
+ThreadPool::ThreadPool(unsigned ThreadCount) {
   if (ThreadCount) {
     errs() << "Warning: request a ThreadPool with " << ThreadCount
            << " threads, but LLVM_ENABLE_THREADS has been turned off\n";
@@ -127,16 +126,6 @@ void ThreadPool::wait() {
     Tasks.pop();
     Task();
   }
-}
-
-std::shared_future<void> ThreadPool::asyncImpl(TaskTy Task) {
-  // Get a Future with launch::deferred execution using std::async
-  auto Future = std::async(std::launch::deferred, std::move(Task)).share();
-  // Wrap the future so that both ThreadPool::wait() can operate and the
-  // returned future can be sync'ed on.
-  PackagedTaskTy PackagedTask([Future]() { Future.get(); });
-  Tasks.push(std::move(PackagedTask));
-  return Future;
 }
 
 ThreadPool::~ThreadPool() {
