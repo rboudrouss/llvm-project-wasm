@@ -166,9 +166,8 @@ Memory::allocateMappedMemory(size_t NumBytes,
   return Result;
 
 #else
-  MemoryBlock Result;
-  Result.Address = ::malloc(NumBytes);
-  Result.Size = NumBytes;
+  void *Addr = ::malloc(NumBytes);
+  MemoryBlock Result(Addr, NumBytes);
   return Result;
 #endif
 }

@@ -756,11 +756,15 @@ std::error_code status(int FD, file_status &Result) {
 }
 
 unsigned getUmask() {
+#ifndef BINJI_HACK
   // Chose arbitary new mask and reset the umask to the old mask.
   // umask(2) never fails so ignore the return of the second call.
   unsigned Mask = ::umask(0);
   (void) ::umask(Mask);
   return Mask;
+#else
+  return 0022; // Default umask
+#endif
 }
 
 std::error_code setPermissions(const Twine &Path, perms Permissions) {

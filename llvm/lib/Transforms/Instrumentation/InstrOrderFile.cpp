@@ -31,7 +31,9 @@
 #include "llvm/Transforms/Instrumentation/InstrOrderFile.h"
 #include <fstream>
 #include <map>
+#ifndef BINJI_HACK
 #include <mutex>
+#endif
 #include <set>
 #include <sstream>
 
@@ -51,7 +53,9 @@ namespace {
 // fixed-size buffer that saves the MD5 hash of the function. We need
 // a global variable to save the index into the buffer.
 
+#ifndef BINJI_HACK
 std::mutex MappingMutex;
+#endif
 
 struct InstrOrderFile {
 private:
@@ -98,7 +102,9 @@ public:
   // update the buffer.
   void generateCodeSequence(Module &M, Function &F, int FuncId) {
     if (!ClOrderFileWriteMapping.empty()) {
+#ifndef BINJI_HACK
       std::lock_guard<std::mutex> LogLock(MappingMutex);
+#endif
       std::error_code EC;
       llvm::raw_fd_ostream OS(ClOrderFileWriteMapping, EC, llvm::sys::fs::F_Append);
       if (EC) {

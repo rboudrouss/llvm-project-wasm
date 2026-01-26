@@ -48,6 +48,9 @@
 #include "llvm/Transforms/Utils/SplitModule.h"
 
 #include <set>
+#ifndef BINJI_HACK
+#include <mutex>
+#endif
 
 using namespace llvm;
 using namespace lto;
@@ -1036,7 +1039,9 @@ class InProcessThinBackend : public ThinBackendProc {
   std::set<GlobalValue::GUID> CfiFunctionDecls;
 
   Optional<Error> Err;
+#ifndef BINJI_HACK
   std::mutex ErrMu;
+#endif
 
 public:
   InProcessThinBackend(
@@ -1115,7 +1120,9 @@ public:
               AddStream, Cache, Task, BM, CombinedIndex, ImportList, ExportList,
               ResolvedODR, DefinedGlobals, ModuleMap);
           if (E) {
+#ifndef BINJI_HACK
             std::unique_lock<std::mutex> L(ErrMu);
+#endif
             if (Err)
               Err = joinErrors(std::move(*Err), std::move(E));
             else
