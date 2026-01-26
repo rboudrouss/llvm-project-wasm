@@ -299,6 +299,7 @@ static void RegisterHandlers() { // Not signal-safe.
     assert(Index < array_lengthof(RegisteredSignalInfo) &&
            "Out of space for signal handlers!");
 
+#ifdef BINJI_HACK
     struct sigaction NewHandler;
 
     switch (Kind) {
@@ -315,6 +316,7 @@ static void RegisterHandlers() { // Not signal-safe.
 
     // Install the new handler, save the old one in RegisteredSignalInfo.
     sigaction(Signal, &NewHandler, &RegisteredSignalInfo[Index].SA);
+#endif
     RegisteredSignalInfo[Index].SigNo = Signal;
     ++NumRegisteredSignals;
   };
@@ -328,12 +330,14 @@ static void RegisterHandlers() { // Not signal-safe.
 }
 
 static void UnregisterHandlers() {
+#ifdef BINJI_HACK
   // Restore all of the signal handlers to how they were before we showed up.
   for (unsigned i = 0, e = NumRegisteredSignals.load(); i != e; ++i) {
     sigaction(RegisteredSignalInfo[i].SigNo,
               &RegisteredSignalInfo[i].SA, nullptr);
     --NumRegisteredSignals;
   }
+#endif
 }
 
 /// Process the FilesToRemove list.
@@ -349,10 +353,12 @@ static RETSIGTYPE SignalHandler(int Sig) {
   // instead of recursing in the signal handler.
   UnregisterHandlers();
 
+#ifdef BINJI_HACK
   // Unmask all potentially blocked kill signals.
   sigset_t SigMask;
   sigfillset(&SigMask);
   sigprocmask(SIG_UNBLOCK, &SigMask, nullptr);
+#endif
 
   {
     RemoveFilesToRemove();
