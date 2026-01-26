@@ -189,7 +189,9 @@ FileOutputBuffer::create(StringRef Path, size_t Size, unsigned Flags) {
   case fs::file_type::regular_file:
   case fs::file_type::file_not_found:
   case fs::file_type::status_error:
+#ifndef BINJI_HACK
     return createOnDiskBuffer(Path, Size, Mode);
+#endif
   default:
     return createInMemoryBuffer(Path, Size, Mode);
   }
