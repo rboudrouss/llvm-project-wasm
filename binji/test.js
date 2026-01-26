@@ -38,17 +38,21 @@ function profile(name, f) {
   }
 }
 
-function getModule(filename) {
-  const buffer = profile(`readbuffer(${filename})`, () => readbuffer(filename));
-  const module = profile(`new Module`, () => new WebAssembly.Module(buffer));
-  return module;
+function readFile(filename) {
+  return profile(`readFile(${filename})`, () => readbuffer(filename));
 }
 
-function getInstance(filename, imports) {
-  const mod = getModule(filename);
-  const instance =
-      profile(`new Instance`, () => new WebAssembly.Instance(mod, imports));
-  return instance;
+function getModuleFromBuffer(buffer) {
+  return profile(`new Module`, () => new WebAssembly.Module(buffer));
+}
+
+function getModuleFromFile(filename) {
+  return getModuleFromBuffer(readFile(filename));
+}
+
+function getInstance(module, imports) {
+  return profile(`new Instance`,
+                 () => new WebAssembly.Instance(module, imports));
 }
 
 function getImportObject(obj, names) {
@@ -57,6 +61,16 @@ function getImportObject(obj, names) {
     result[name] = obj[name].bind(obj);
   }
   return result;
+}
+
+function readStr(u8, o, len = -1) {
+  let str = '';
+  let end = u8.length;
+  if (len != -1)
+    end = o + len;
+  for (let i = o; i < end && u8[i] != 0; ++i)
+    str += String.fromCharCode(u8[i]);
+  return str;
 }
 
 const ESUCCESS = 0;
@@ -83,24 +97,27 @@ class Memory {
   write32(o, v) { this.u32[o >> 2] = v; }
   write64(o, vlo, vhi = 0) { this.write32(o, vlo); this.write32(o + 4, vhi); }
 
-  readStr(o, len = -1) {
-    let str = '';
-    let end = this.buffer.byteLength;
-    if (len != -1)
-      end = o + len;
-    for (let i = o; i < end && this.read8(i) != 0; ++i)
-      str += String.fromCharCode(this.read8(i));
-    return str;
+  readStr(o, len) {
+    return readStr(this.u8, o, len);
   }
 
+  // Null-terminated string.
   writeStr(o, str) {
-    for (let i = 0; i < str.length; i++) {
-      const c = str.charCodeAt(i);
-      assert(c < 256);
-      this.write8(o++, c);
-    }
-    this.write8(o++, 0);
+    o += this.write(o, str);
+    this.write8(o, 0);
     return str.length + 1;
+  }
+
+  write(o, buf) {
+    if (buf instanceof ArrayBuffer) {
+      return this.write(o, new Uint8Array(buf));
+    } else if (typeof buf === 'string') {
+      return this.write(o, buf.split('').map(x => x.charCodeAt(0)));
+    } else {
+      const dst = new Uint8Array(this.buffer, o, buf.length);
+      dst.set(buf);
+      return buf.length;
+    }
   }
 };
 
@@ -122,7 +139,9 @@ class HostWriteBuffer {
   }
 
   flush() {
-    print(this.buffer);
+    if (this.buffer.length > 0) {
+      print(this.buffer);
+    }
   }
 }
 
@@ -135,7 +154,7 @@ class MemFS {
     const env = getImportObject(
         this, [ 'abort', 'host_write', 'memfs_log', 'copy_in', 'copy_out' ]);
 
-    this.instance = getInstance('memfs', {env});
+    this.instance = getInstance(getModuleFromFile('memfs'), {env});
     this.exports = this.instance.exports;
     this.mem = new Memory(this.exports.memory);
 
@@ -144,6 +163,32 @@ class MemFS {
 
   set hostMem(mem) {
     this.hostMem_ = mem;
+  }
+
+  addDirectory(path) {
+    this.mem.check();
+    this.mem.write(this.exports.GetPathBuf(), path);
+    this.exports.AddDirectoryNode(path.length);
+  }
+
+  addFile(path, contents) {
+    const length =
+        contents instanceof ArrayBuffer ? contents.byteLength : contents.length;
+    this.mem.check();
+    this.mem.write(this.exports.GetPathBuf(), path);
+    const inode = this.exports.AddFileNode(path.length, length);
+    const addr = this.exports.GetFileNodeAddress(inode);
+    this.mem.check();
+    this.mem.write(addr, contents);
+  }
+
+  getFileContents(path) {
+    this.mem.check();
+    this.mem.write(this.exports.GetPathBuf(), path);
+    const inode = this.exports.FindNode(path.length);
+    const addr = this.exports.GetFileNodeAddress(inode);
+    const size = this.exports.GetFileNodeSize(inode);
+    return new Uint8Array(this.mem.buffer, addr, size);
   }
 
   hostFlush() {
@@ -180,8 +225,7 @@ class MemFS {
     const dst = new Uint8Array(this.hostMem_.buffer, clang_dst, size);
     this.mem.check();
     const src = new Uint8Array(this.mem.buffer, memfs_src, size);
-    // print(`copy_out(${clang_dst.toString(16)}, ${memfs_src.toString(16)},
-    // ${size})`);
+    // print(`copy_out(${clang_dst.toString(16)}, ${memfs_src.toString(16)}, ${size})`);
     dst.set(src);
   }
 
@@ -190,15 +234,14 @@ class MemFS {
     const dst = new Uint8Array(this.mem.buffer, memfs_dst, size);
     this.hostMem_.check();
     const src = new Uint8Array(this.hostMem_.buffer, clang_src, size);
-    // print(`copy_in(${memfs_dst.toString(16)}, ${clang_src.toString(16)},
-    // ${size})`);
+    // print(`copy_in(${memfs_dst.toString(16)}, ${clang_src.toString(16)}, ${size})`);
     dst.set(src);
   }
 }
 
 
 class App {
-  constructor(filename, memfs, name, ...args) {
+  constructor(module, memfs, name, ...args) {
     this.argv = [name, ...args];
     this.environ = {USER : 'alice'};
     this.memfs = memfs;
@@ -211,18 +254,16 @@ class App {
     // Fill in some WASI implementations from memfs.
     Object.assign(wasi_unstable, this.memfs.exports);
 
-    this.instance = getInstance(filename, {wasi_unstable});
+    this.instance = getInstance(module, {wasi_unstable});
     this.exports = this.instance.exports;
     this.mem = new Memory(this.exports.memory);
     this.memfs.hostMem = this.mem;
 
     try {
-      profile(`run ${name}`, () => this.exports._start());
+      profile(`running ${name}`, () => this.exports._start());
     } catch(exn) {
-      if (exn instanceof ProcExit) {
-        if (exn.code != 0) {
-          throw exn;
-        }
+      if (!(exn instanceof ProcExit) || exn.code != 0) {
+        throw exn;
       }
     }
   }
@@ -296,11 +337,206 @@ class App {
   }
 }
 
-const memfs = new MemFS();
-// new App('clang', memfs, 'clang', '--help');
-new App('clang', memfs, 'clang', '-cc1', '-emit-obj', 'test.c', '-o', 'test.o');
-// new App('clang', memfs, 'clang', '-cc1', '-S', 'test.c', '-o', '-');
+class Tar {
+  constructor(filename) {
+    this.u8 = new Uint8Array(readbuffer(filename));
+    this.offset = 0;
+  }
 
-new App('lld', memfs, 'wasm-ld', '--verbose', '--no-threads', '--no-entry', 'test.o', '-o', 'test')
+  readStr(len) {
+    const result = readStr(this.u8, this.offset, len);
+    this.offset += len;
+    return result;
+  }
 
-memfs.hostFlush();
+  readOctal(len) {
+    return parseInt(this.readStr(len), 8);
+  }
+
+  alignUp() {
+    this.offset = (this.offset + 511) & ~511;
+  }
+
+  readEntry() {
+    if (this.offset + 512 > this.u8.length) {
+      return null;
+    }
+
+    const entry = {
+      filename : this.readStr(100),
+      mode : this.readOctal(8),
+      owner : this.readOctal(8),
+      group : this.readOctal(8),
+      size : this.readOctal(12),
+      mtim : this.readOctal(12),
+      checksum : this.readOctal(8),
+      type : this.readStr(1),
+      linkname : this.readStr(100),
+    };
+
+    if (this.readStr(8) !== 'ustar  ') {
+      return null;
+    }
+
+    entry.ownerName = this.readStr(32);
+    entry.groupName = this.readStr(32);
+    entry.devMajor = this.readStr(8);
+    entry.devMinor = this.readStr(8);
+    entry.filenamePrefix = this.readStr(155);
+    this.alignUp();
+
+    if (entry.type === '0') {        // Regular file.
+      entry.contents = this.u8.subarray(this.offset, this.offset + entry.size);
+      this.offset += entry.size;
+      this.alignUp();
+    } else if (entry.type !== '5') { // Directory.
+      print('type', entry.type);
+      assert(false);
+    }
+    return entry;
+  }
+}
+
+function isPrint(b) {
+  return b >= 32 && b < 128;
+}
+
+function dump(buf) {
+  let str = '';
+  let addr = 0;
+  let line = buf.slice(addr, addr + 16);
+  while (line.length > 0) {
+    let lineStr = `${addr.toString(16).padStart(8, '0')}:`;
+
+    for (let i = 0; i < line.length; i += 2) {
+      lineStr += ` ${line[i].toString(16).padStart(2, '0')}`;
+      if (i + 1 < line.length) {
+        lineStr += `${line[i + 1].toString(16).padStart(2, '0')}`;
+      }
+    }
+    lineStr = lineStr.padEnd(51, ' ');
+    for (let i = 0; i < line.length; ++i) {
+      let b = line[i];
+      let c = isPrint(b) ? String.fromCharCode(b) : '.';
+      lineStr += `${c}`;
+    }
+    lineStr += '\n';
+
+    addr += 16;
+    line = buf.slice(addr, addr + 16);
+    str += lineStr;
+  }
+  print(str);
+}
+
+profile('total time', () => {
+  const input = 'test.cc';
+  const contents = `
+  // #include <algorithm>  // FAIL
+  // #include <any> // ok
+  #include <array> // FAIL
+  // #include <bitset> // FAIL
+  // #include <chrono> // ok
+  // #include <complex> // FAIL
+  // #include <filesystem> // ok
+  // #include <fstream> // ok
+  // #include <functional> // FAIL
+  // #include <initializer_list> // ok
+  // #include <iomanip> // FAIL
+  // #include <iosfwd> // ok
+  // #include <ios> // ok
+  // #include <iostream> // FAIL
+  // #include <istream> // FAIL
+  // #include <iterator> // ok
+  // #include <limits> // ok
+  // #include <list> // FAIL
+  // #include <locale> // FAIL
+  // #include <map> // FAIL
+  // #include <memory> // ok
+  // #include <new> // ok
+  // #include <numeric> // FAIL
+  // #include <optional> // FAIL
+  // #include <ostream> // FAIL
+  // #include <random> // FAIL
+  // #include <regex> // ok
+  // #include <set> // FAIL
+  // #include <span> // FAIL
+  // #include <sstream> // FAIL
+  // #include <stack> // FAIL
+  // #include <streambuf> // ok
+  // #include <string> // FAIL
+  // #include <string_view> // FAIL
+  // #include <tuple> // ok
+  // #include <typeindex> // ok
+  // #include <typeinfo> // ok
+  // #include <type_traits> // ok
+  // #include <unordered_map> // FAIL
+  // #include <unordered_set> // FAIL
+  // #include <valarray> // FAIL
+  // #include <variant> // FAIL
+  // #include <vector> // FAIL
+  // #include <version> // ok
+  `;
+
+  const memfs = new MemFS();
+  memfs.addFile(input, contents)
+
+  profile('untar', () => {
+    const tar = new Tar('sysroot.tar');
+    let entry;
+    while (entry = tar.readEntry()) {
+      switch (entry.type) {
+      case '0': // Regular file.
+        memfs.addFile(entry.filename, entry.contents);
+        break;
+      case '5':
+        memfs.addDirectory(entry.filename);
+        break;
+      }
+    }
+  });
+
+  const clang = getModuleFromFile('clang');
+  // const lld = getModuleFromFile('lld');
+
+  const wasm = 'test';
+
+  profile('compile+link', () => {
+    const libdir = 'lib/wasm32-wasi';
+    const crt1 = `${libdir}/crt1.o`;
+    const obj = 'test.o';
+
+    new App(clang, memfs, 'clang', '-cc1',
+            // '-triple', 'wasm32-unknown-wasi',
+            '-emit-obj',
+            // '-E',
+            // '-S',
+            // '-main-file-name', input, '-mrelocation-model', 'static',
+            // '-mthread-model', 'single', '-mconstructor-aliases',
+            // '-fuse-init-array', '-target-cpu', 'generic', '-fvisibility',
+            // 'hidden', '-momit-leaf-frame-pointer', '-resource-dir',
+            // '/lib/clang/8.0.1',
+            '-isysroot', '/',
+            '-internal-isystem', '/include/c++/v1',
+            '-internal-isystem', '/include',
+            '-internal-isystem', '/lib/clang/8.0.1/include',
+
+            // '-fdebug-compilation-dir', '/',
+            // '-O2',
+            // '-ferror-limit', '19', '-fmessage-length', '212', '-fno-common',
+            '-o', obj, '-x', 'c++', input
+    );
+
+    if (false) {
+      new App(lld, memfs, 'wasm-ld', '--no-threads', `-L${libdir}`, crt1, obj,
+              '-lc', '-o', wasm)
+    }
+  });
+
+  if (false) {
+    const test = getModuleFromBuffer(memfs.getFileContents(wasm));
+    new App(test, memfs, 'test');
+  }
+
+  memfs.hostFlush();
+});
