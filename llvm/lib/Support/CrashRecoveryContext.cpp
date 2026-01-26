@@ -292,13 +292,16 @@ static void uninstallExceptionOrSignalHandlers() {
 // reliable fashion -- if we get a signal outside of a crash recovery context we
 // simply disable crash recovery and raise the signal again.
 
+#ifndef BINJI_HACK
 #include <signal.h>
 
 static const int Signals[] =
     { SIGABRT, SIGBUS, SIGFPE, SIGILL, SIGSEGV, SIGTRAP };
 static const unsigned NumSignals = array_lengthof(Signals);
 static struct sigaction PrevActions[NumSignals];
+#endif
 
+#ifndef BINJI_HACK
 static void CrashRecoverySignalHandler(int Signal) {
   // Lookup the current thread local recovery object.
   const CrashRecoveryContextImpl *CRCI = CurrentContext->get();
@@ -321,17 +324,16 @@ static void CrashRecoverySignalHandler(int Signal) {
     return;
   }
 
-#ifndef BINJI_HACK
   // Unblock the signal we received.
   sigset_t SigMask;
   sigemptyset(&SigMask);
   sigaddset(&SigMask, Signal);
   sigprocmask(SIG_UNBLOCK, &SigMask, nullptr);
-#endif
 
   if (CRCI)
     const_cast<CrashRecoveryContextImpl*>(CRCI)->HandleCrash();
 }
+#endif
 
 static void installExceptionOrSignalHandlers() {
 #ifndef BINJI_HACK

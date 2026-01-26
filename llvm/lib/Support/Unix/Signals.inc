@@ -80,8 +80,10 @@
 
 using namespace llvm;
 
+#ifndef BINJI_HACK
 static RETSIGTYPE SignalHandler(int Sig);  // defined below.
 static RETSIGTYPE InfoSignalHandler(int Sig);  // defined below.
+#endif
 
 using SignalHandlerFunctionType = void (*)();
 /// The function to call if ctrl-c is pressed.
@@ -203,6 +205,7 @@ struct FilesToRemoveCleanup {
 
 static StringRef Argv0;
 
+#ifndef BINJI_HACK
 /// Signals that represent requested termination. There's no bug or failure, or
 /// if there is, it's not our direct responsibility. For whatever reason, our
 /// continued execution is no longer desirable.
@@ -246,6 +249,7 @@ static struct {
   struct sigaction SA;
   int SigNo;
 } RegisteredSignalInfo[NumSigs];
+#endif
 
 #if defined(HAVE_SIGALTSTACK)
 // Hold onto both the old and new alternate signal stack so that it's not
@@ -286,6 +290,7 @@ static void RegisterHandlers() { // Not signal-safe.
   sys::SmartScopedLock<true> Guard(*SignalHandlerRegistrationMutex);
 
   // If the handlers are already registered, we're done.
+#ifndef BINJI_HACK
   if (NumRegisteredSignals.load() != 0)
     return;
 
@@ -299,7 +304,6 @@ static void RegisterHandlers() { // Not signal-safe.
     assert(Index < array_lengthof(RegisteredSignalInfo) &&
            "Out of space for signal handlers!");
 
-#ifndef BINJI_HACK
     struct sigaction NewHandler;
 
     switch (Kind) {
@@ -316,7 +320,6 @@ static void RegisterHandlers() { // Not signal-safe.
 
     // Install the new handler, save the old one in RegisteredSignalInfo.
     sigaction(Signal, &NewHandler, &RegisteredSignalInfo[Index].SA);
-#endif
     RegisteredSignalInfo[Index].SigNo = Signal;
     ++NumRegisteredSignals;
   };
@@ -327,6 +330,7 @@ static void RegisterHandlers() { // Not signal-safe.
     registerHandler(S, SignalKind::IsKill);
   for (auto S : InfoSigs)
     registerHandler(S, SignalKind::IsInfo);
+#endif
 }
 
 static void UnregisterHandlers() {
@@ -345,6 +349,7 @@ static void RemoveFilesToRemove() {
   FileToRemoveList::removeAllFiles(FilesToRemove);
 }
 
+#ifndef BINJI_HACK
 // The signal handler that runs.
 static RETSIGTYPE SignalHandler(int Sig) {
   // Restore the signal behavior to default, so that the program actually
@@ -363,6 +368,7 @@ static RETSIGTYPE SignalHandler(int Sig) {
   {
     RemoveFilesToRemove();
 
+#ifndef BINJI_HACK
     if (std::find(std::begin(IntSigs), std::end(IntSigs), Sig)
         != std::end(IntSigs)) {
       if (auto OldInterruptFunction = InterruptFunction.exchange(nullptr))
@@ -375,6 +381,7 @@ static RETSIGTYPE SignalHandler(int Sig) {
       raise(Sig);   // Execute the default handler.
       return;
    }
+#endif
   }
 
   // Otherwise if it is a fault (like SEGV) run any handler.
@@ -395,6 +402,7 @@ static RETSIGTYPE InfoSignalHandler(int Sig) {
   if (SignalHandlerFunctionType CurrentInfoFunction = InfoSignalFunction)
     CurrentInfoFunction();
 }
+#endif // !BINJI_HACK
 
 void llvm::sys::RunInterruptHandlers() {
   RemoveFilesToRemove();
