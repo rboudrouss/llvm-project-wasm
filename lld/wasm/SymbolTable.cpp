@@ -135,19 +135,29 @@ static void reportTypeError(const Symbol *existing, const InputFile *file,
 }
 
 // Check the type of new symbol matches that of the symbol is replacing.
-// Returns true if the function types match, false is there is a singature
-// mismatch.
-static bool signatureMatches(FunctionSymbol *existing,
-                             const WasmSignature *newSig) {
-  const WasmSignature *oldSig = existing->signature;
+// For functions this can also involve verifying that the signatures match.
+static void checkFunctionType(Symbol *Existing, const InputFile *File,
+                              const WasmSignature *NewSig) {
+  auto ExistingFunction = dyn_cast<FunctionSymbol>(Existing);
+  if (!ExistingFunction) {
+    reportTypeError(Existing, File, WASM_SYMBOL_TYPE_FUNCTION);
+    return;
+  }
 
-  // If either function is missing a signature (this happend for bitcode
-  // symbols) then assume they match.  Any mismatch will be reported later
-  // when the LTO objects are added.
-  if (!newSig || !oldSig)
-    return true;
+  if (!NewSig)
+    return;
 
-  return *newSig == *oldSig;
+  const WasmSignature *OldSig = ExistingFunction->Signature;
+  if (!OldSig) {
+    ExistingFunction->Signature = NewSig;
+    return;
+  }
+
+  if (Config->WarnOnSignatureMismatch && *NewSig != *OldSig)
+    warn("function signature mismatch: " + Existing->getName() +
+         "\n>>> defined as " + toString(*OldSig) + " in " +
+         toString(Existing->getFile()) + "\n>>> defined as " +
+         toString(*NewSig) + " in " + toString(File));
 }
 
 static void checkGlobalType(const Symbol *existing, const InputFile *file,

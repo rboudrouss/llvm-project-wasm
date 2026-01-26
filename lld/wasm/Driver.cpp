@@ -370,20 +370,54 @@ static void readConfigs(opt::InputArgList &args) {
 // command line options, but computed based on other Config values.
 // This function initialize such members. See Config.h for the details
 // of these values.
-static void setConfigs() {
-  config->isPic = config->pie || config->shared;
+static void setConfigs(opt::InputArgList &Args) {
+  Config->AllowUndefined = Args.hasArg(OPT_allow_undefined);
+  Config->CompressRelocations = Args.hasArg(OPT_compress_relocations);
+  Config->Demangle = Args.hasFlag(OPT_demangle, OPT_no_demangle, true);
+  Config->DisableVerify = Args.hasArg(OPT_disable_verify);
+  Config->Entry = getEntry(Args, Args.hasArg(OPT_relocatable) ? "" : "_start");
+  Config->ExportAll = Args.hasArg(OPT_export_all);
+  Config->ExportDynamic = Args.hasFlag(OPT_export_dynamic,
+      OPT_no_export_dynamic, false);
+  Config->ExportTable = Args.hasArg(OPT_export_table);
+  errorHandler().FatalWarnings =
+      Args.hasFlag(OPT_fatal_warnings, OPT_no_fatal_warnings, false);
+  Config->ImportMemory = Args.hasArg(OPT_import_memory);
+  Config->SharedMemory = Args.hasArg(OPT_shared_memory);
+  Config->ImportTable = Args.hasArg(OPT_import_table);
+  Config->LTOO = args::getInteger(Args, OPT_lto_O, 2);
+  Config->LTOPartitions = args::getInteger(Args, OPT_lto_partitions, 1);
+  Config->Optimize = args::getInteger(Args, OPT_O, 0);
+  Config->OutputFile = Args.getLastArgValue(OPT_o);
+  Config->Relocatable = Args.hasArg(OPT_relocatable);
+  Config->GcSections =
+      Args.hasFlag(OPT_gc_sections, OPT_no_gc_sections, !Config->Relocatable);
+  Config->MergeDataSegments =
+      Args.hasFlag(OPT_merge_data_segments, OPT_no_merge_data_segments,
+                   !Config->Relocatable);
+  Config->Pie = Args.hasFlag(OPT_pie, OPT_no_pie, false);
+  Config->PrintGcSections =
+      Args.hasFlag(OPT_print_gc_sections, OPT_no_print_gc_sections, false);
+  Config->SaveTemps = Args.hasArg(OPT_save_temps);
+  Config->SearchPaths = args::getStrings(Args, OPT_L);
+  Config->Shared = Args.hasArg(OPT_shared);
+  Config->StripAll = Args.hasArg(OPT_strip_all);
+  Config->StripDebug = Args.hasArg(OPT_strip_debug);
+  Config->StackFirst = Args.hasArg(OPT_stack_first);
+  Config->WarnOnSignatureMismatch = Args.hasArg(OPT_warn_signature_mismatch);
+  Config->ThinLTOCacheDir = Args.getLastArgValue(OPT_thinlto_cache_dir);
+  Config->ThinLTOCachePolicy = CHECK(
+      parseCachePruningPolicy(Args.getLastArgValue(OPT_thinlto_cache_policy)),
+      "--thinlto-cache-policy: invalid cache policy");
+  Config->ThinLTOJobs = args::getInteger(Args, OPT_thinlto_jobs, -1u);
+  errorHandler().Verbose = Args.hasArg(OPT_verbose);
+  ThreadsEnabled = Args.hasFlag(OPT_threads, OPT_no_threads, true);
 
-  if (config->isPic) {
-    if (config->exportTable)
-      error("-shared/-pie is incompatible with --export-table");
-    config->importTable = true;
-  }
-
-  if (config->shared) {
-    config->importMemory = true;
-    config->exportDynamic = true;
-    config->allowUndefined = true;
-  }
+  Config->InitialMemory = args::getInteger(Args, OPT_initial_memory, 0);
+  Config->GlobalBase = args::getInteger(Args, OPT_global_base, 1024);
+  Config->MaxMemory = args::getInteger(Args, OPT_max_memory, 0);
+  Config->ZStackSize =
+      args::getZOptionValue(Args, OPT_z, "stack-size", WasmPageSize);
 }
 
 // Some command line options or some combinations of them are not allowed.

@@ -46,6 +46,7 @@ struct Configuration {
   bool stripDebug;
   bool stackFirst;
   bool trace;
+  bool WarnOnSignatureMismatch;
   uint32_t globalBase;
   uint32_t initialMemory;
   uint32_t maxMemory;
