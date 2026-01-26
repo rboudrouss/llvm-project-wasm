@@ -474,6 +474,9 @@ static bool is_local_impl(struct STATVFS &Vfs) {
 #elif defined(__HAIKU__)
   // Haiku doesn't expose this information.
   return false;
+#elif defined(__EMSCRIPTEN__)
+  // Emscripten doesn't have real filesystem mount info.
+  return true;
 #elif defined(__sun)
   // statvfs::f_basetype contains a null-terminated FSType name of the mounted target
   StringRef fstype(Vfs.f_basetype);
